@@ -1,0 +1,475 @@
+<!-- ==================== STATE ==================== -->
+<script>
+    let currentConversations = [];
+    let activeConversationIndex = -1;
+</script>
+
+<!-- ==================== DETEKCJA FORMATU JSON ==================== -->
+<script>
+    /**
+     * Wykrywa format JSON na podstawie struktury danych.
+     * Zwraca: 'deepseek' | 'claude' | 'gpt' | 'unknown'
+     */
+    function detectFormat(conv) {
+        if (!conv || typeof conv !== 'object') return 'unknown';
+
+        // DeepSeek: ma mapping z fragmentami REQUEST/RESPONSE
+        if (conv.mapping && typeof conv.mapping === 'object') {
+            const nodes = Object.values(conv.mapping);
+            const hasFragments = nodes.some(n =>
+                n.message && n.message.fragments &&
+                n.message.fragments.some(f => f.type === 'REQUEST' || f.type === 'RESPONSE')
+            );
+            if (hasFragments) return 'deepseek';
+
+            // GPT: mapping z message.author.role
+            const hasGptRole = nodes.some(n =>
+                n.message && n.message.author && n.message.author.role
+            );
+            if (hasGptRole) return 'gpt';
+        }
+
+        // Claude: chat_messages[] z sender: "human"/"assistant"
+        if (conv.chat_messages && Array.isArray(conv.chat_messages)) return 'claude';
+
+        return 'unknown';
+    }
+
+    /**
+     * Normalizuje rozmowę do wspólnego formatu:
+     * { title, date, format, messages: [{ role: 'user'|'assistant', content, timestamp }] }
+     */
+    function normalizeConversation(conv) {
+        const format = detectFormat(conv);
+        const title = conv.title || conv.name || 'Rozmowa';
+        let date = conv.create_time || conv.created || conv.inserted_at || '';
+        let messages = [];
+
+        if (format === 'deepseek') {
+            const rootNode = Object.values(conv.mapping).find(n => n.parent === 'root');
+            let currentNode = rootNode;
+            while (currentNode && currentNode.message) {
+                if (currentNode.message.fragments) {
+                    currentNode.message.fragments.forEach(f => {
+                        messages.push({
+                            role: f.type === 'REQUEST' ? 'user' : 'assistant',
+                            content: f.content || '',
+                            timestamp: currentNode.message.create_time || ''
+                        });
+                    });
+                }
+                currentNode = currentNode.children && currentNode.children.length > 0
+                    ? conv.mapping[currentNode.children[0]] : null;
+            }
+
+        } else if (format === 'claude') {
+            const sorted = [...conv.chat_messages].sort((a, b) =>
+                new Date(a.created_at) - new Date(b.created_at)
+            );
+            if (!date && sorted.length > 0) date = sorted[0].created_at;
+            messages = sorted.map(m => {
+                const mainText = (m.content || []).map(c => c.text || '').join('\n');
+                const attachments = (m.attachments || [])
+                    .filter(a => a.extracted_content)
+                    .map(a => `\n\n📎 **${a.file_name || 'załącznik'}**\n\`\`\`\n${a.extracted_content}\n\`\`\``)
+                    .join('');
+                return {
+                    role: m.sender === 'human' ? 'user' : 'assistant',
+                    content: mainText + attachments,
+                    timestamp: m.created_at || ''
+                };
+            });
+
+        } else if (format === 'gpt') {
+            const nodes = conv.mapping;
+            const rootId = Object.keys(nodes).find(k => !nodes[k].parent || nodes[k].parent === null);
+            const visited = new Set();
+
+            function traverse(nodeId) {
+                if (!nodeId || visited.has(nodeId)) return;
+                visited.add(nodeId);
+                const node = nodes[nodeId];
+                if (node && node.message && node.message.content) {
+                    const role = node.message.author && node.message.author.role;
+                    const parts = node.message.content.parts || [];
+                    const text = parts.filter(p => typeof p === 'string').join('\n');
+                    if (text && (role === 'user' || role === 'assistant')) {
+                        messages.push({
+                            role,
+                            content: text,
+                            timestamp: node.message.create_time
+                                ? new Date(node.message.create_time * 1000).toISOString()
+                                : ''
+                        });
+                    }
+                }
+                (node && node.children ? node.children : []).forEach(traverse);
+            }
+            traverse(rootId);
+            if (!date && conv.create_time) date = new Date(conv.create_time * 1000).toISOString();
+        }
+
+        return { title, date, format, messages };
+    }
+</script>
+
+<!-- ==================== WCZYTYWANIE PLIKU JSON ==================== -->
+<script>
+    document.getElementById('fileInput').addEventListener('change', function(event) {
+        const file = event.target.files[0];
+        const reader = new FileReader();
+
+        reader.onload = function(e) {
+            try {
+                const conversations = JSON.parse(e.target.result);
+                currentConversations = Array.isArray(conversations) ? conversations : [conversations];
+                loadConversations(currentConversations);
+            } catch (error) {
+                alert('Błąd parsowania JSON: ' + error.message);
+            }
+        };
+
+        reader.readAsText(file);
+    });
+</script>
+
+<!-- ==================== ŁADOWANIE LISTY ROZMÓW ==================== -->
+<script>
+    function loadConversations(conversations) {
+        const sidebar = document.getElementById('sidebar');
+        const content = document.getElementById('content');
+
+        let arr = Array.isArray(conversations) ? conversations : [conversations];
+
+        arr.sort((a, b) => {
+            function getDate(c) {
+                let t = c.create_time || c.created || c.inserted_at ||
+                    (c.chat_messages && c.chat_messages[0] && c.chat_messages[0].created_at) || 0;
+                // GPT daje sekundy (liczba ~1.7mld), reszta daje ISO string
+                if (typeof t === 'number') t = t * 1000;
+                return t;
+            }
+            return new Date(getDate(b)) - new Date(getDate(a));
+        });
+
+        const formatIcon = { deepseek: '🐋', claude: '🟠', gpt: '🟢', unknown: '❓' };
+
+        sidebar.innerHTML = `
+            <div id="sidebarControls">
+                <div class="sidebar-header">MOJE ROZMOWY (${arr.length})</div>
+                <div style="display:flex;gap:6px;margin-bottom:8px;">
+                    <button class="select-bar-btn" onclick="exportAllJSON()" style="flex:1;">💾 JSON</button>
+                    <button class="select-bar-btn" onclick="openMergeTool()" style="flex:1;">🔀 Merge</button>
+                </div>
+                <div class="select-bar" id="selectBar">
+                    <button class="select-bar-btn active" onclick="toggleSelectMode()">✕ Anuluj</button>
+                    <button class="select-bar-btn" onclick="selectAll()">Zaznacz wszystkie</button>
+                    <button class="select-bar-btn" onclick="exportSelectedJSON()">💾 JSON</button>
+                    <button class="select-bar-btn" onclick="exportSelectedMD('full')">📄 MD całość</button>
+                    <button class="select-bar-btn" onclick="exportSelectedMD('mine')">🙋 MD tylko ja</button>
+                    <button class="select-bar-btn danger" onclick="deleteSelected()">🗑️ Usuń</button>
+                </div>
+                <button class="select-bar-btn" id="selectModeBtn" onclick="toggleSelectMode()" style="margin-bottom:4px;width:100%;">☑️ Tryb zaznaczania</button>
+            </div>
+            <div id="sidebarList"></div>
+        `;
+
+        if (arr.length === 0) {
+            document.getElementById('sidebarList').innerHTML = '<div style="color:#666;padding:10px;text-align:center;">Brak rozmów</div>';
+            content.innerHTML = '<div style="text-align:center;margin-top:100px;color:#666;">Brak rozmów do wyświetlenia</div>';
+            return;
+        }
+
+        const listEl = document.getElementById('sidebarList');
+
+        arr.forEach((conv, index) => {
+            const norm = normalizeConversation(conv);
+            const icon = formatIcon[norm.format] || '❓';
+            const div = document.createElement('div');
+            div.className = 'conversation';
+
+            div.innerHTML = `
+                <div class="conversation-header">
+                    <input type="checkbox" class="conversation-checkbox" onclick="handleCheckbox(event, ${index})">
+                    <div class="conversation-info" data-fulltitle="${norm.title}">
+                        <div class="conversation-title">${icon} ${norm.title}</div>
+                        <div class="conversation-date">${formatDate(norm.date)}</div>
+                    </div>
+                    <div class="conversation-menu">
+                        <button class="menu-btn" onclick="toggleMenu(event, ${index})">⋮</button>
+                        <div class="menu-dropdown" id="menu-${index}">
+                            <button class="menu-item" onclick="exportMD('full', ${index})">📄 MD całość</button>
+                            <button class="menu-item" onclick="exportMD('mine', ${index})">🙋 MD tylko ja</button>
+                            <button class="menu-item" onclick="exportSingleConversation(${index})">📥 JSON</button>
+                            <button class="menu-item delete" onclick="deleteConversation(${index})">🗑️ Usuń</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            div.onclick = (e) => {
+                if (!e.target.classList.contains('menu-btn') &&
+                    !e.target.closest('.menu-dropdown') &&
+                    !e.target.classList.contains('conversation-checkbox')) {
+                    document.querySelectorAll('.conversation').forEach(c => c.classList.remove('active'));
+                    div.classList.add('active');
+                    activeConversationIndex = index;
+                    showConversation(conv, index);
+                }
+            };
+
+            listEl.appendChild(div);
+        });
+
+        if (arr.length > 0) document.querySelector('.conversation').click();
+        currentConversations = arr;
+    }
+</script>
+
+<!-- ==================== MENU KONTEKSTOWE (⋮) ==================== -->
+<script>
+    function toggleMenu(event, index) {
+        event.stopPropagation();
+        const menu = document.getElementById(`menu-${index}`);
+        document.querySelectorAll('.menu-dropdown').forEach(m => {
+            if (m !== menu) m.classList.remove('show');
+        });
+        menu.classList.toggle('show');
+    }
+
+    document.addEventListener('click', function() {
+        document.querySelectorAll('.menu-dropdown').forEach(m => m.classList.remove('show'));
+    });
+
+    function deleteConversation(index) {
+        if (confirm('Czy na pewno chcesz usunąć tę rozmowę?')) {
+            currentConversations.splice(index, 1);
+            loadConversations(currentConversations);
+            if (currentConversations.length === 0) {
+                document.getElementById('content').innerHTML = '<div style="text-align:center;margin-top:100px;color:#666;">Brak rozmów</div>';
+            }
+        }
+    }
+</script>
+
+<!-- ==================== WYŚWIETLANIE ROZMOWY ==================== -->
+<script>
+    const formatLabel = { deepseek: 'DeepSeek 🐋', claude: 'Claude 🟠', gpt: 'ChatGPT 🟢', unknown: 'Nieznany ❓' };
+
+    function showConversation(conv, index) {
+        const content = document.getElementById('content');
+        const norm = normalizeConversation(conv);
+
+        content.innerHTML = `
+            <div class="conversation-header">
+                <div class="conversation-title-main">${norm.title}</div>
+                <div class="conversation-date-main" style="color:#666;font-size:0.9em;margin-top:5px;">
+                    ${formatDate(norm.date)}
+                    <span style="margin-left:10px;background:#2d2d2d;padding:2px 8px;border-radius:4px;font-size:0.85em;">${formatLabel[norm.format] || '❓'}</span>
+                </div>
+                <div class="export-md-bar">
+                    <button class="export-md-btn full" onclick="exportMD('full', ${index})">📄 Eksportuj całość (.md)</button>
+                    <button class="export-md-btn mine" onclick="exportMD('mine', ${index})">🙋 Tylko moje wiadomości (.md)</button>
+                </div>
+            </div>
+            <div class="messages-container" id="messagesContainer"></div>
+        `;
+
+        const container = document.getElementById('messagesContainer');
+
+        if (norm.messages.length === 0) {
+            container.innerHTML = '<div style="text-align:center;color:#666;margin-top:50px;">Brak wiadomości w tej rozmowie</div>';
+            return;
+        }
+
+        norm.messages.forEach(msg => {
+            const msgDiv = document.createElement('div');
+            msgDiv.className = 'message ' + (msg.role === 'user' ? 'user' : 'assistant');
+
+            const headerEl = document.createElement('div');
+            headerEl.className = 'message-header';
+            headerEl.textContent = msg.role === 'user' ? '*** JA: ***' : '*** AI: ***';
+            headerEl.style.cssText = 'font-weight:bold;margin-bottom:8px;color:#888;font-size:0.9em;';
+
+            const contentEl = document.createElement('div');
+            contentEl.className = 'message-content';
+            contentEl.innerHTML = formatMessageContent(msg.content || '');
+
+            msgDiv.appendChild(headerEl);
+            msgDiv.appendChild(contentEl);
+            container.appendChild(msgDiv);
+        });
+
+        content.scrollTop = content.scrollHeight;
+    }
+</script>
+
+<!-- ==================== POMOCNICZA DO DEKODOWANIA DLA MD ==================== -->
+<script>
+function cleanForMarkdown(text) {
+    if (!text || typeof text !== 'string') return text;
+    
+    let result = text;
+    
+    // Zamień znaczniki encji na czytelny tekst (dla MD)
+    // Wzorzec: entity[...]
+    const entityPattern = /\uE200entity\uE202\[(.*?)\]\uE201/g;
+    result = result.replace(entityPattern, (match, content) => {
+        try {
+            const parsed = JSON.parse('[' + content + ']');
+            if (Array.isArray(parsed) && parsed.length >= 2) {
+                const name = parsed[1];
+                const desc = parsed[2] || '';
+                return desc ? `${name} (${desc})` : name;
+            }
+            return parsed.join(', ');
+        } catch(e) {
+            return content;
+        }
+    });
+    
+    // Usuń pozostałe "krzaczki" (inne znaki PUA)
+    result = result.replace(/[\uE000-\uF8FF]/g, '');
+    
+    return result;
+}
+</script>
+
+<!-- ==================== EKSPORT MD ==================== -->
+<script>
+function exportMD(mode, index) {
+    const conv = currentConversations[index];
+    const norm = normalizeConversation(conv);
+
+    let md = `# ${norm.title}\n`;
+    if (norm.date) md += `*${formatDate(norm.date)}*\n`;
+    md += `\n---\n\n`;
+
+    norm.messages.forEach(msg => {
+        if (mode === 'mine' && msg.role !== 'user') return;
+        const header = msg.role === 'user' ? '*** JA: ***' : '*** AI: ***';
+        
+        // Czyścimy treść z "krzaczków" przed wrzuceniem do MD
+        const cleanContent = cleanForMarkdown(msg.content || '');
+        
+        md += `### ${header}\n\n${cleanContent.trim()}\n\n---\n\n`;
+    });
+
+    const suffix = mode === 'mine' ? '_tylko_ja' : '_z_ai';
+    const dateStr = (norm.date ? new Date(norm.date) : new Date()).toISOString().slice(0, 10);
+    const safeTitle = norm.title.replace(/[^a-zA-Z0-9ąćęłńóśźżĄĆĘŁŃÓŚŹŻ _-]/g, '_').trim();
+    const filename = `${safeTitle}_${dateStr}${suffix}.md`;
+
+    const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = filename;
+    link.click();
+}
+</script>
+
+<!-- ==================== EKSPORT JSON ==================== -->
+<script>
+    function exportSingleConversation(index) {
+        const conversation = currentConversations[index];
+        const norm = normalizeConversation(conversation);
+        const safeTitle = norm.title.replace(/[^a-zA-Z0-9ąćęłńóśźżĄĆĘŁŃÓŚŹŻ _-]/g, '_').trim();
+        const blob = new Blob([JSON.stringify([conversation], null, 2)], { type: 'application/json' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = `${safeTitle}_${Date.now()}.json`;
+        link.click();
+    }
+
+    function saveModifiedJson() {
+        if (currentConversations.length === 0) { alert('Brak rozmów do zapisania!'); return; }
+        const blob = new Blob([JSON.stringify(currentConversations, null, 2)], { type: 'application/json' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = `moje_rozmowy_zmodyfikowane_${Date.now()}.json`;
+        link.click();
+    }
+</script>
+
+<!-- ==================== FORMATOWANIE TREŚCI ==================== -->
+<script>
+    // === NOWA FUNKCJA DEKODUJĄCA ===
+    function decodeSpecialMarkers(text) {
+        if (!text || typeof text !== 'string') return text;
+        
+        let result = text;
+        const entityPattern = /\uE200entity\uE202\[(.*?)\]\uE201/g;
+        
+        result = result.replace(entityPattern, (match, content) => {
+            try {
+                const parsed = JSON.parse('[' + content + ']');
+                if (Array.isArray(parsed) && parsed.length >= 2) {
+                    const name = parsed[1];
+                    const desc = parsed[2] || '';
+                    return desc ? `${name} (${desc})` : name;
+                }
+                return parsed.join(', ');
+            } catch(e) {
+                return content;
+            }
+        });
+        
+        return result;
+    }
+
+    // ORYGINALNA FUNKCJA Z ROZSZERZENIEM
+    function formatMessageContent(content) {
+        if (!content) return '';
+        
+        // NAJPIERW ZDEKODUJ ZNACZNIKI
+        let processed = decodeSpecialMarkers(content);
+
+        const codeBlocks = [];
+        let idx = 0;
+
+        processed = processed.replace(/```(\w+)?\n([\s\S]*?)```/g, (match, lang, code) => {
+            const id = `CODE_BLOCK_${idx++}`;
+            codeBlocks.push({ id, lang, code: code.trim() });
+            return id;
+        });
+
+        processed = escapeHtml(processed);
+
+        codeBlocks.forEach(block => {
+            const html = `
+                <div class="code-block">
+                    <div class="code-header">
+                        <span class="code-language">${block.lang || 'text'}</span>
+                        <button class="copy-btn" onclick="copyCode('${block.id}')">Kopiuj</button>
+                    </div>
+                    <pre class="code-content" id="${block.id}">${escapeHtml(block.code)}</pre>
+                </div>
+            `;
+            processed = processed.replace(block.id, html);
+        });
+
+        processed = processed.replace(/`([^`]+)`/g, '<code>$1</code>');
+        return processed;
+    }
+    
+    // reszta funkcji (copyCode, toggleExpand) pozostaje bez zmian...
+</script>
+
+<!-- ==================== HELPERS ==================== -->
+<script>
+    function formatDate(timestamp) {
+        if (!timestamp) return 'Brak daty';
+        try {
+            return new Date(timestamp).toLocaleDateString('pl-PL', {
+                year: 'numeric', month: 'short', day: 'numeric',
+                hour: '2-digit', minute: '2-digit'
+            });
+        } catch (e) { return 'Błędna data'; }
+    }
+
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+</script>

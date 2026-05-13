@@ -1,0 +1,286 @@
+<!-- ==================== TRYB ZAZNACZANIA ==================== -->
+<script>
+    let selectMode = false;
+
+    function toggleSelectMode() {
+        selectMode = !selectMode;
+        const sidebar = document.getElementById('sidebar');
+        const bar = document.getElementById('selectBar');
+        const btn = document.getElementById('selectModeBtn');
+
+        if (selectMode) {
+            sidebar.classList.add('select-mode');
+            bar.classList.add('show');
+            btn.style.display = 'none';
+        } else {
+            sidebar.classList.remove('select-mode');
+            bar.classList.remove('show');
+            btn.style.display = 'block';
+            document.querySelectorAll('.conversation').forEach(c => {
+                c.classList.remove('selected');
+                const cb = c.querySelector('.conversation-checkbox');
+                if (cb) cb.checked = false;
+            });
+        }
+    }
+
+    function handleCheckbox(event, index) {
+        event.stopPropagation();
+        const conv = event.target.closest('.conversation');
+        conv.classList.toggle('selected', event.target.checked);
+    }
+
+    function selectAll() {
+        document.querySelectorAll('.conversation').forEach(c => {
+            c.classList.add('selected');
+            const cb = c.querySelector('.conversation-checkbox');
+            if (cb) cb.checked = true;
+        });
+    }
+
+    function deleteSelected() {
+        const selected = document.querySelectorAll('.conversation.selected');
+        if (selected.length === 0) { alert('Nic nie zaznaczone!'); return; }
+        if (!confirm(`Usunąć ${selected.length} rozmow(ę/y)?`)) return;
+
+        const toDelete = getSelectedIndices();
+        currentConversations = currentConversations.filter((_, i) => !toDelete.has(i));
+        selectMode = false;
+        loadConversations(currentConversations);
+    }
+
+    function getSelectedIndices() {
+        const indices = new Set();
+        document.querySelectorAll('.conversation.selected').forEach(el => {
+            const cb = el.querySelector('.conversation-checkbox');
+            if (cb) {
+                const match = cb.getAttribute('onclick').match(/\d+/);
+                if (match) indices.add(parseInt(match[0]));
+            }
+        });
+        return indices;
+    }
+</script>
+
+<!-- ==================== EKSPORT JSON (zaznaczone / wszystkie) ==================== -->
+<script>
+    function exportSelectedJSON() {
+        const indices = getSelectedIndices();
+        if (indices.size === 0) { alert('Nic nie zaznaczone!'); return; }
+        const toExport = currentConversations.filter((_, i) => indices.has(i));
+        downloadJSON(toExport, `eksport_zaznaczone_${Date.now()}.json`);
+    }
+
+    function exportAllJSON() {
+        if (currentConversations.length === 0) { alert('Brak rozmów!'); return; }
+        downloadJSON(currentConversations, `eksport_wszystkie_${Date.now()}.json`);
+    }
+
+    function exportSelectedMD(mode) {
+        const indices = getSelectedIndices();
+        if (indices.size === 0) { alert('Nic nie zaznaczone!'); return; }
+
+        const selected = currentConversations.filter((_, i) => indices.has(i));
+        let exported = 0;
+
+        // Eksportuje po kolei z małym opóźnieniem żeby przeglądarka nie blokował pobierania
+        selected.forEach((conv, i) => {
+            setTimeout(() => {
+                const norm = normalizeConversation(conv);
+                let md = `# ${norm.title}\n`;
+                if (norm.date) md += `*${formatDate(norm.date)}*\n`;
+                md += `\n---\n\n`;
+
+                norm.messages.forEach(msg => {
+                    if (mode === 'mine' && msg.role !== 'user') return;
+                    const header = msg.role === 'user' ? '*** JA: ***' : '*** AI: ***';
+                    md += `### ${header}\n\n${(msg.content || '').trim()}\n\n---\n\n`;
+                });
+
+                const suffix = mode === 'mine' ? '_tylko_ja' : '_z_ai';
+                const dateStr = (norm.date ? new Date(norm.date) : new Date()).toISOString().slice(0, 10);
+                const safeTitle = norm.title.replace(/[^a-zA-Z0-9ąćęłńóśźżĄĆĘŁŃÓŚŹŻ _-]/g, '_').trim();
+                const filename = `${safeTitle}_${dateStr}${suffix}.md`;
+
+                const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
+                const link = document.createElement('a');
+                link.href = URL.createObjectURL(blob);
+                link.download = filename;
+                link.click();
+            }, i * 300); // 300ms między każdym plikiem
+        });
+    }
+
+    function downloadJSON(data, filename) {
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = filename;
+        link.click();
+    }
+</script>
+
+<!-- ==================== MERGE TOOL ==================== -->
+<script>
+    function openMergeTool() {
+        // Usuń stary modal jeśli istnieje
+        const old = document.getElementById('mergeModal');
+        if (old) old.remove();
+
+        const modal = document.createElement('div');
+        modal.id = 'mergeModal';
+        modal.style.cssText = `
+            position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+            display: flex; align-items: center; justify-content: center;
+            z-index: 9999;
+        `;
+
+        modal.innerHTML = `
+            <div style="background:#252525;border:1px solid #444;border-radius:12px;padding:28px;width:480px;max-width:90vw;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+                    <h3 style="color:#fff;margin:0;">🔀 Merge rozmów</h3>
+                    <button onclick="document.getElementById('mergeModal').remove()" style="background:none;border:none;color:#888;font-size:1.4em;cursor:pointer;">✕</button>
+                </div>
+
+                <div style="color:#aaa;font-size:0.85em;margin-bottom:16px;line-height:1.6;">
+                    Wgraj nowy plik JSON — dodane zostaną <strong style="color:#fff">tylko rozmowy nowsze</strong> niż te już załadowane.<br>
+                    Usunięte przez Ciebie rozmowy <strong style="color:#ef4444">nie wrócą</strong>.
+                </div>
+
+                <div id="mergeStatus" style="display:none;margin-bottom:14px;padding:10px 14px;border-radius:8px;font-size:0.85em;"></div>
+
+                <label style="display:block;background:#2d2d2d;border:1px dashed #555;border-radius:8px;padding:20px;text-align:center;cursor:pointer;color:#888;transition:all 0.2s;" 
+                       onmouseover="this.style.borderColor='#3b82f6'" 
+                       onmouseout="this.style.borderColor='#555'">
+                    📂 Kliknij lub przeciągnij nowy plik JSON
+                    <input type="file" accept=".json" style="display:none;" onchange="handleMergeFile(this)">
+                </label>
+
+                <div style="margin-top:16px;display:flex;gap:10px;justify-content:flex-end;">
+                    <button onclick="document.getElementById('mergeModal').remove()" 
+                            style="background:#2d2d2d;color:#aaa;border:1px solid #444;padding:7px 16px;border-radius:6px;cursor:pointer;font-size:0.85em;">
+                        Anuluj
+                    </button>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(modal);
+
+        // Zamknij klikając tło
+        modal.addEventListener('click', e => {
+            if (e.target === modal) modal.remove();
+        });
+    }
+
+    function handleMergeFile(input) {
+        const file = input.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            try {
+                const newData = JSON.parse(e.target.result);
+                const newArr = Array.isArray(newData) ? newData : [newData];
+                performMerge(newArr);
+            } catch (err) {
+                showMergeStatus('error', '❌ Błąd parsowania pliku: ' + err.message);
+            }
+        };
+        reader.readAsText(file);
+    }
+
+    function getConvDate(conv) {
+        // Próbuje wyciągnąć najnowszą datę z rozmowy (ostatnia wiadomość)
+        if (conv.create_time) return new Date(conv.create_time).getTime();
+        if (conv.created) return new Date(conv.created).getTime();
+        if (conv.inserted_at) return new Date(conv.inserted_at).getTime();
+
+        // Claude format — ostatnia wiadomość
+        if (conv.chat_messages && conv.chat_messages.length > 0) {
+            const last = [...conv.chat_messages].sort((a, b) =>
+                new Date(b.created_at) - new Date(a.created_at)
+            )[0];
+            return new Date(last.created_at).getTime();
+        }
+
+        // DeepSeek/GPT — szukaj w mapping
+        if (conv.mapping) {
+            const nodes = Object.values(conv.mapping);
+            const times = nodes
+                .filter(n => n.message && n.message.create_time)
+                .map(n => n.message.create_time * 1000);
+            if (times.length > 0) return Math.max(...times);
+        }
+
+        return 0;
+    }
+
+    function getConvId(conv) {
+        // Unikalny identyfikator rozmowy — używamy id jeśli jest, fallback na tytuł+datę
+        return conv.id || conv.uuid || (conv.title || conv.name || '') + '_' + getConvDate(conv);
+    }
+
+    function performMerge(newArr) {
+        // Zbierz ID i daty wszystkich obecnych rozmów
+        const existingIds = new Set(currentConversations.map(c => getConvId(c)));
+        const maxExistingDate = Math.max(...currentConversations.map(c => getConvDate(c)), 0);
+
+        let added = 0;
+        let skippedOld = 0;
+        let skippedDuplicate = 0;
+
+        newArr.forEach(conv => {
+            const id = getConvId(conv);
+            const date = getConvDate(conv);
+
+            if (existingIds.has(id)) {
+                skippedDuplicate++;
+                return;
+            }
+
+            if (date <= maxExistingDate && date > 0) {
+                // Sprawdź czy to faktycznie nowa (mogła być stworzona tego samego dnia)
+                // Jeśli data jest STARSZA niż cokolwiek co mamy — pomiń
+                if (date < maxExistingDate) {
+                    skippedOld++;
+                    return;
+                }
+            }
+
+            currentConversations.push(conv);
+            existingIds.add(id);
+            added++;
+        });
+
+        // Pokaż wynik
+        if (added > 0) {
+            showMergeStatus('success',
+                `✅ Dodano <strong>${added}</strong> nowych rozmów.<br>` +
+                `Pominięto: ${skippedDuplicate} duplikatów, ${skippedOld} starszych.`
+            );
+            setTimeout(() => {
+                document.getElementById('mergeModal').remove();
+                loadConversations(currentConversations);
+            }, 1800);
+        } else {
+            showMergeStatus('info',
+                `ℹ️ Brak nowych rozmów do dodania.<br>` +
+                `Pominięto: ${skippedDuplicate} duplikatów, ${skippedOld} starszych.`
+            );
+        }
+    }
+
+    function showMergeStatus(type, html) {
+        const el = document.getElementById('mergeStatus');
+        if (!el) return;
+        const colors = {
+            success: { bg: '#064e3b', border: '#10b981', text: '#6ee7b7' },
+            error:   { bg: '#7f1d1d', border: '#ef4444', text: '#fca5a5' },
+            info:    { bg: '#1e3a5f', border: '#3b82f6', text: '#93c5fd' }
+        };
+        const c = colors[type] || colors.info;
+        el.style.cssText = `display:block;background:${c.bg};border:1px solid ${c.border};color:${c.text};margin-bottom:14px;padding:10px 14px;border-radius:8px;font-size:0.85em;line-height:1.6;`;
+        el.innerHTML = html;
+    }
+</script>

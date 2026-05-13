@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Moje Rozmowy - DeepSeek</title>
+    <!--#include virtual="style.shtml" -->
+</head>
+<body>
+
+    <input type="file" id="fileInput" accept=".json" title="Wybierz plik conversations.json">
+
+    <div class="controls">
+        <button class="save-btn" onclick="saveModifiedJson()">💾 Zapisz zmodyfikowany JSON</button>
+    </div>
+
+    <div id="sidebar">
+        <div class="sidebar-header">MOJE ROZMOWY</div>
+    </div>
+
+    <div id="content">
+        <div style="text-align:center; margin-top:100px; color:#666;">
+            Wybierz plik JSON z rozmowami lub kliknij na rozmowę z listy
+        </div>
+    </div>
+
+    <!--#include virtual="script.shtml" -->
+    <!--#include virtual="select.shtml" -->
+
+</body>
+</html>

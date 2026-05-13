@@ -1,0 +1,457 @@
+<!-- ==================== RESET & GLOBAL ==================== -->
+<style>
+    * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+    }
+
+    body {
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        background: #1a1a1a;
+        color: #e0e0e0;
+        display: flex;
+        height: 100vh;
+        overflow: hidden;
+    }
+
+    ::-webkit-scrollbar { width: 8px; }
+    ::-webkit-scrollbar-track { background: #2d2d2d; }
+    ::-webkit-scrollbar-thumb { background: #555; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #666; }
+</style>
+
+<style>
+
+.entity-tag {
+    background-color: #2d2d2d;
+    color: #ffd700;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.9em;
+    cursor: help;
+    border-bottom: 1px dotted #ffd700;
+}
+
+.entity-tag:hover {
+    background-color: #3d3d3d;
+}
+
+</style>
+
+<!-- ==================== TOPBAR (file input + save btn) ==================== -->
+<style>
+    #fileInput {
+        position: fixed;
+        top: 15px;
+        left: 15px;
+        z-index: 1000;
+        background: #2d2d2d;
+        color: #e0e0e0;
+        border: 1px solid #444;
+        padding: 8px 12px;
+        border-radius: 8px;
+        cursor: pointer;
+    }
+
+    #fileInput:hover { background: #3d3d3d; }
+
+    .controls {
+        position: fixed;
+        top: 15px;
+        right: 15px;
+        z-index: 1000;
+    }
+
+    .save-btn {
+        background: #10b981;
+        color: white;
+        border: none;
+        padding: 8px 16px;
+        border-radius: 8px;
+        cursor: pointer;
+        font-size: 0.9em;
+        transition: background 0.2s;
+    }
+
+    .save-btn:hover { background: #059669; }
+</style>
+
+<!-- ==================== SIDEBAR ==================== -->
+<style>
+    #sidebar {
+        width: 520px;
+        background: #252525;
+        border-right: 1px solid #333;
+        display: flex;
+        flex-direction: column;
+        margin-top: 60px;
+        overflow: hidden;
+    }
+
+    #sidebarControls {
+        padding: 20px 20px 10px 20px;
+        flex-shrink: 0;
+        border-bottom: 1px solid #2d2d2d;
+    }
+
+    #sidebarList {
+        overflow-y: auto;
+        padding: 10px 20px 20px 20px;
+        flex: 1;
+    }
+
+    .sidebar-header {
+        color: #888;
+        font-size: 0.9em;
+        margin-bottom: 15px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid #333;
+    }
+
+    /* Lista rozmów */
+    .conversation {
+        padding: 12px 15px;
+        border-radius: 8px;
+        cursor: pointer;
+        margin-bottom: 8px;
+        border: 1px solid transparent;
+        transition: all 0.2s ease;
+    }
+
+    .conversation:hover { background: #2d2d2d; border-color: #444; }
+    .conversation.active { background: #2d2d2d; border-color: #666; }
+
+    .conversation-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 10px;
+    }
+
+    .conversation-info {
+        flex: 1;
+        min-width: 0;
+        position: relative;
+    }
+
+    .conversation-title {
+        font-weight: 600;
+        color: #fff;
+        margin-bottom: 4px;
+        font-size: 0.95em;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .conversation-date { color: #666; font-size: 0.8em; }
+
+    /* Tooltip */
+    .conversation-info:hover::after {
+        content: attr(data-fulltitle);
+        position: absolute;
+        bottom: 100%;
+        left: 0;
+        background: #333;
+        color: #fff;
+        padding: 8px 12px;
+        border-radius: 6px;
+        white-space: normal;
+        width: 250px;
+        z-index: 1000;
+        font-size: 0.85em;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    }
+
+    /* Menu ⋮ */
+    .conversation-menu {
+        position: relative;
+        flex-shrink: 0;
+        opacity: 0;
+        transition: opacity 0.3s ease 0.5s;
+    }
+
+    .conversation:hover .conversation-menu {
+        opacity: 1;
+        transition-delay: 0s;
+    }
+
+    .menu-btn {
+        background: none;
+        border: none;
+        color: #888;
+        cursor: pointer;
+        padding: 6px;
+        border-radius: 50%;
+        width: 28px;
+        height: 28px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.1em;
+        transition: all 0.2s ease;
+    }
+
+    .menu-btn:hover { background: #3d3d3d; color: #fff; }
+
+    .menu-dropdown {
+        position: absolute;
+        top: 100%;
+        right: 0;
+        background: #2d2d2d;
+        border: 1px solid #444;
+        border-radius: 8px;
+        padding: 8px 0;
+        min-width: 120px;
+        display: none;
+        z-index: 1000;
+    }
+
+    .menu-dropdown.show { display: block; }
+
+    .menu-item {
+        background: none;
+        border: none;
+        color: #e0e0e0;
+        padding: 8px 16px;
+        width: 100%;
+        text-align: left;
+        cursor: pointer;
+        font-size: 0.8em;
+    }
+
+    .menu-item:hover { background: #3d3d3d; }
+    .menu-item.delete { color: #ef4444; }
+</style>
+
+<!-- ==================== SELECT MODE ==================== -->
+<style>
+    .conversation-checkbox {
+        width: 32px;
+        height: 32px;
+        accent-color: #3b82f6;
+        cursor: pointer;
+        flex-shrink: 0;
+        display: none;
+    }
+
+    #sidebar.select-mode .conversation-checkbox { display: block; }
+    #sidebar.select-mode .conversation-menu { display: none !important; }
+
+    .conversation.selected {
+        background: #1e3a5f;
+        border-color: #3b82f6;
+    }
+
+    .select-bar {
+        display: none;
+        gap: 8px;
+        margin-bottom: 12px;
+        flex-wrap: wrap;
+    }
+
+    .select-bar.show { display: flex; }
+
+    .select-bar-btn {
+        background: #2d2d2d;
+        color: #e0e0e0;
+        border: 1px solid #444;
+        padding: 5px 11px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 0.78em;
+        transition: all 0.2s;
+    }
+
+    .select-bar-btn:hover { background: #3d3d3d; }
+    .select-bar-btn.danger:hover { background: #7f1d1d; border-color: #ef4444; color: #fca5a5; }
+    .select-bar-btn.active { background: #1e3a5f; border-color: #3b82f6; color: #93c5fd; }
+</style>
+
+<!-- ==================== CONTENT AREA ==================== -->
+<style>
+    #content {
+        flex: 1;
+        padding: 10%;
+        overflow-y: auto;
+        margin-top: 60px;
+        background: #1e1e1e;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .conversation-header-main {
+        margin-bottom: 20px;
+        padding-bottom: 15px;
+        border-bottom: 1px solid #333;
+    }
+
+    .conversation-title-main { color: #fff; font-size: 1.3em; margin-bottom: 5px; }
+    .conversation-date-main { color: #666; font-size: 0.9em; }
+
+    /* Export MD buttons */
+    .export-md-bar {
+        display: flex;
+        gap: 10px;
+        margin-top: 10px;
+        flex-wrap: wrap;
+    }
+
+    .export-md-btn {
+        background: #1e293b;
+        color: #94a3b8;
+        border: 1px solid #334155;
+        padding: 6px 14px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 0.8em;
+        transition: all 0.2s;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .export-md-btn:hover { background: #334155; color: #e2e8f0; border-color: #475569; }
+    .export-md-btn.full:hover { border-color: #3b82f6; color: #93c5fd; }
+    .export-md-btn.mine:hover { border-color: #10b981; color: #6ee7b7; }
+</style>
+
+<!-- ==================== MESSAGES ==================== -->
+<style>
+    .messages-container {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .message {
+        margin: 12px 0;
+        padding: 18px 22px;
+        border-radius: 12px;
+        white-space: pre-wrap;
+        line-height: 1.6;
+        max-width: 78%;
+        position: relative;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        animation: fadeIn 0.3s ease;
+    }
+
+    @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+
+    .user {
+        background: linear-gradient(135deg, #2563eb, #1d4ed8);
+        color: white;
+        margin-left: auto;
+        margin-right: 40px;
+        border-bottom-right-radius: 4px;
+    }
+
+    .assistant {
+        background: #2d2d2d;
+        border: 1px solid #444;
+        margin-left: 40px;
+        margin-right: auto;
+        border-bottom-left-radius: 4px;
+    }
+
+    .message-content { font-size: 0.95em; line-height: 1.7; }
+</style>
+
+<!-- ==================== FILE ATTACHMENTS ==================== -->
+<style>
+    .file-attachment {
+        background: #333;
+        border: 1px solid #444;
+        border-radius: 8px;
+        padding: 12px;
+        margin: 8px 0;
+        font-size: 0.85em;
+        white-space: pre-wrap;
+        max-width: 80%;
+        margin-left: 0;
+        margin-right: auto;
+    }
+
+    .file-header { color: #fbbf24; font-weight: 600; margin-bottom: 6px; font-size: 0.9em; }
+
+    .file-item {
+        margin: 8px 0;
+        padding: 8px;
+        background: #2a2a2a;
+        border-radius: 6px;
+        border-left: 3px solid #f59e0b;
+    }
+
+    .fileName { color: #fcd34d; font-weight: 600; margin-bottom: 4px; font-size: 0.85em; }
+    .fileContent { color: #d1d5db; font-style: italic; font-size: 0.8em; }
+    .fileContent.collapsed { max-height: 100px; overflow: hidden; }
+    .fileContent.expanded { max-height: none; }
+
+    .expand-button {
+        background: #3b82f6;
+        color: white;
+        border: none;
+        padding: 4px 8px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 0.7em;
+        margin-top: 5px;
+        transition: background 0.2s;
+    }
+
+    .expand-button:hover { background: #2563eb; }
+</style>
+
+<!-- ==================== CODE BLOCKS ==================== -->
+<style>
+    .code-block {
+        background: #2d2d2d;
+        border: 1px solid #444;
+        border-radius: 8px;
+        padding: 16px;
+        margin: 10px 0;
+        overflow-x: auto;
+        font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+        font-size: 0.85em;
+        line-height: 1.4;
+    }
+
+    .code-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 10px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid #444;
+    }
+
+    .code-language { color: #fbbf24; font-weight: 600; font-size: 0.9em; }
+
+    .copy-btn {
+        background: #3b82f6;
+        color: white;
+        border: none;
+        padding: 4px 8px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 0.7em;
+        transition: background 0.2s;
+    }
+
+    .copy-btn:hover { background: #2563eb; }
+    .copy-btn.copied { background: #10b981; }
+
+    .code-content { color: #e0e0e0; white-space: pre; }
+
+    .message-content code {
+        background: #2d2d2d;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+        font-size: 0.9em;
+        border: 1px solid #444;
+    }
+</style>
